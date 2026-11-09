@@ -106,7 +106,8 @@ class TFTView_320x240 : public MeshtasticView
         eReset,
         eReboot,
         eDisplayMode,
-        eModifyChannel
+        eModifyChannel,
+        eBluetooth
     };
 
   protected:
@@ -138,6 +139,10 @@ class TFTView_320x240 : public MeshtasticView
     virtual void requestSetup(void);
     // patch widgets on generated screens
     virtual void apply_hotfix(void);
+    // create the Bluetooth on/off settings entry and panel (not part of the generated screens)
+    virtual void createBluetoothSettings(void);
+    // show the current bluetooth state and PIN in the settings
+    virtual void updateBluetoothSettings(void);
     // update node counter display (online and filtered)
     virtual void updateNodesStatus(void);
     // display message popup
@@ -324,6 +329,8 @@ class TFTView_320x240 : public MeshtasticView
     static void ui_event_screen_lock_button(lv_event_t *e);
     static void ui_event_input_button(lv_event_t *e);
     static void ui_event_alert_button(lv_event_t *e);
+    static void ui_event_bluetooth_button(lv_event_t *e);
+    static void ui_event_bluetooth_switch(lv_event_t *e);
     static void ui_event_backup_button(lv_event_t *e);
     static void ui_event_reset_button(lv_event_t *e);
     static void ui_event_reboot_button(lv_event_t *e);
@@ -397,6 +404,11 @@ class TFTView_320x240 : public MeshtasticView
 
     static TFTView_320x240 *gui;                          // singleton pattern
     bool screensInitialised;                              // true if init_screens is completed
+    lv_obj_t *bluetoothSettingsButton = nullptr;          // basic settings entry: Bluetooth on/off
+    lv_obj_t *bluetoothSettingsLabel = nullptr;           // text of the basic settings entry
+    lv_obj_t *bluetoothSettingsPanel = nullptr;           // Bluetooth settings panel
+    lv_obj_t *bluetoothSettingsSwitch = nullptr;          // Bluetooth on/off switch
+    lv_obj_t *bluetoothSettingsPinLabel = nullptr;        // fixed PIN shown while Bluetooth is on
     uint32_t nodesFiltered;                               // no. hidden nodes in node list
     bool nodesChanged;                                    // true if nodes changed (added or purged)
     bool processingFilter;                                // indicates that filtering is ongoing

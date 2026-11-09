@@ -412,6 +412,11 @@ void TFTView_320x240::init_screens(void)
         lv_obj_add_flag(objects.progmode_button, LV_OBJ_FLAG_HIDDEN);
     }
 
+    createBluetoothSettings();
+    if (controller->isStandalone()) {
+        lv_obj_add_flag(bluetoothSettingsButton, LV_OBJ_FLAG_HIDDEN);
+    }
+
     // signal scanner scale
 #if defined(USE_SX127x)
     lv_label_set_text(objects.signal_scanner_rssi_scale_label, "-50\n-60\n-70\n-80\n-90\n-100\n-110\n-120\n-130\n-140\n-150");
@@ -517,6 +522,130 @@ void TFTView_320x240::ui_set_active(lv_obj_t *b, lv_obj_t *p, lv_obj_t *tp)
 
     lv_obj_add_flag(objects.keyboard, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(objects.msg_popup_panel, LV_OBJ_FLAG_HIDDEN);
+}
+
+/**
+ * @brief Bluetooth on/off entry in the basic settings and its panel. Built at runtime (the generated EEZ screens have no
+ *        bluetooth setting) with the same styles as the other basic settings button/panel pairs, so it follows the theme
+ *        and works for every generated resolution that uses this view.
+ */
+void TFTView_320x240::createBluetoothSettings(void)
+{
+    // basic settings entry, right after "Message Alert"
+    lv_obj_t *obj = lv_btn_create(lv_obj_get_parent(objects.basic_settings_alert_button));
+    bluetoothSettingsButton = obj;
+    lv_obj_set_pos(obj, 0, 0);
+    lv_obj_set_size(obj, LV_PCT(95), 30);
+    add_style_settings_button_style(obj);
+    lv_obj_set_style_align(obj, LV_ALIGN_TOP_MID, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff4db270), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(obj, lv_color_hex(0xff015114), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_move_to_index(obj, lv_obj_get_index(objects.basic_settings_alert_button) + 1);
+    lv_obj_add_event_cb(obj, ui_event_bluetooth_button, LV_EVENT_CLICKED, NULL);
+
+    obj = lv_label_create(bluetoothSettingsButton);
+    bluetoothSettingsLabel = obj;
+    lv_obj_set_pos(obj, 0, 0);
+    lv_obj_set_size(obj, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_label_set_long_mode(obj, LV_LABEL_LONG_DOT);
+    lv_label_set_text(obj, _("Bluetooth: off"));
+    lv_obj_set_style_align(obj, LV_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    // settings panel: on/off switch, PIN, OK/Cancel
+    lv_obj_t *panel = lv_obj_create(lv_obj_get_parent(objects.settings_alert_buzzer_panel));
+    bluetoothSettingsPanel = panel;
+    lv_obj_set_pos(panel, LV_PCT(3), LV_PCT(25));
+    lv_obj_set_size(panel, 220, 138);
+    lv_obj_add_flag(panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    add_style_settings_panel_style(panel);
+    lv_obj_set_style_border_width(panel, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(panel, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0xff216ad8), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_align(panel, LV_ALIGN_TOP_MID, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_opa(panel, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_layout(panel, LV_LAYOUT_NONE, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    obj = lv_label_create(panel);
+    lv_obj_set_pos(obj, 0, 5);
+    lv_obj_set_size(obj, 125, LV_SIZE_CONTENT);
+    lv_label_set_text(obj, _("Bluetooth"));
+    lv_obj_set_style_align(obj, LV_ALIGN_TOP_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    obj = lv_switch_create(panel);
+    bluetoothSettingsSwitch = obj;
+    lv_obj_set_pos(obj, 150, 0);
+    lv_obj_set_size(obj, 50, 25);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0xffb4b4b4), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(obj, lv_color_hex(0xff606060), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0xffffffff), LV_PART_KNOB | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff67ea94), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff67ea94), LV_PART_INDICATOR | LV_STATE_PRESSED);
+    lv_obj_add_event_cb(obj, ui_event_bluetooth_switch, LV_EVENT_VALUE_CHANGED, NULL);
+
+    obj = lv_label_create(panel);
+    bluetoothSettingsPinLabel = obj;
+    lv_obj_set_pos(obj, 0, 38);
+    lv_obj_set_size(obj, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_label_set_text(obj, "");
+    lv_obj_set_style_align(obj, LV_ALIGN_TOP_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    // OK / Cancel row, same look as the generated OkCancel user widget
+    lv_obj_t *row = lv_obj_create(panel);
+    lv_obj_set_size(row, LV_PCT(100), 50);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    add_style_panel_style(row);
+    lv_obj_set_style_align(row, LV_ALIGN_BOTTOM_MID, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_all(row, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    const char *texts[] = {_("OK"), _("Cancel")};
+    lv_event_cb_t callbacks[] = {ui_event_ok, ui_event_cancel};
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *button = lv_btn_create(row);
+        lv_obj_set_size(button, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0xff216ad8), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_shadow_width(button, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_radius(button, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_pad_left(button, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_pad_right(button, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_add_event_cb(button, callbacks[i], LV_EVENT_CLICKED, NULL);
+        lv_obj_t *label = lv_label_create(button);
+        lv_label_set_text(label, texts[i]);
+    }
+
+    updateBluetoothSettings();
+}
+
+void TFTView_320x240::updateBluetoothSettings(void)
+{
+    if (!bluetoothSettingsLabel)
+        return;
+
+    const meshtastic_Config_BluetoothConfig &bluetooth = db.config.bluetooth;
+    char buf[48];
+    if (bluetooth.enabled) {
+        lv_snprintf(buf, sizeof(buf), _("Bluetooth: on, PIN %06u"), (unsigned int)bluetooth.fixed_pin);
+    } else {
+        lv_snprintf(buf, sizeof(buf), _("Bluetooth: off"));
+    }
+    lv_label_set_text(bluetoothSettingsLabel, buf);
+
+    // panel: show the PIN the phone has to enter while the switch is on
+    if (lv_obj_has_state(bluetoothSettingsSwitch, LV_STATE_CHECKED)) {
+        lv_snprintf(buf, sizeof(buf), _("PIN: %06u"), (unsigned int)bluetooth.fixed_pin);
+        lv_label_set_text(bluetoothSettingsPinLabel, buf);
+        lv_obj_clear_flag(bluetoothSettingsPinLabel, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(bluetoothSettingsPinLabel, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void TFTView_320x240::enterProgrammingMode(void)
@@ -1981,6 +2110,31 @@ void TFTView_320x240::ui_event_alert_button(lv_event_t *e)
         THIS->disablePanel(objects.controller_panel);
         THIS->disablePanel(objects.tab_page_basic_settings);
         THIS->activeSettings = eAlertBuzzer;
+    }
+}
+
+void TFTView_320x240::ui_event_bluetooth_button(lv_event_t *e)
+{
+    lv_event_code_t event_code = lv_event_get_code(e);
+    if (event_code == LV_EVENT_CLICKED && THIS->activeSettings == eNone && THIS->db.config.has_bluetooth) {
+        if (THIS->db.config.bluetooth.enabled) {
+            lv_obj_add_state(THIS->bluetoothSettingsSwitch, LV_STATE_CHECKED);
+        } else {
+            lv_obj_remove_state(THIS->bluetoothSettingsSwitch, LV_STATE_CHECKED);
+        }
+        THIS->updateBluetoothSettings();
+        lv_obj_clear_flag(THIS->bluetoothSettingsPanel, LV_OBJ_FLAG_HIDDEN);
+        lv_group_focus_obj(THIS->bluetoothSettingsSwitch);
+        THIS->disablePanel(objects.controller_panel);
+        THIS->disablePanel(objects.tab_page_basic_settings);
+        THIS->activeSettings = eBluetooth;
+    }
+}
+
+void TFTView_320x240::ui_event_bluetooth_switch(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
+        THIS->updateBluetoothSettings();
     }
 }
 
@@ -4158,6 +4312,22 @@ void TFTView_320x240::ui_event_ok(lv_event_t *e)
             lv_group_focus_obj(objects.basic_settings_alert_button);
             break;
         }
+        case eBluetooth: {
+            meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
+            bool enabled = lv_obj_has_state(THIS->bluetoothSettingsSwitch, LV_STATE_CHECKED);
+            if (enabled != bluetooth.enabled) {
+                // MUI toggle: fixed PIN shown in the settings, the stored PIN is kept (never randomized here;
+                // a random PIN is only generated by the explicit programming mode)
+                bluetooth.enabled = enabled;
+                bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
+                THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, THIS->ownNode);
+                THIS->notifyReboot(true); // the firmware reboots to apply bluetooth changes
+            }
+            THIS->updateBluetoothSettings();
+            lv_obj_add_flag(THIS->bluetoothSettingsPanel, LV_OBJ_FLAG_HIDDEN);
+            lv_group_focus_obj(THIS->bluetoothSettingsButton);
+            break;
+        }
         case eBackupRestore: {
             uint32_t option = lv_dropdown_get_selected(objects.settings_backup_restore_dropdown);
             if (lv_obj_has_state(objects.settings_backup_checkbox, LV_STATE_CHECKED)) {
@@ -4329,6 +4499,11 @@ void TFTView_320x240::ui_event_cancel(lv_event_t *e)
         case TFTView_320x240::eAlertBuzzer: {
             lv_obj_add_flag(objects.settings_alert_buzzer_panel, LV_OBJ_FLAG_HIDDEN);
             lv_group_focus_obj(objects.basic_settings_alert_button);
+            break;
+        }
+        case TFTView_320x240::eBluetooth: {
+            lv_obj_add_flag(THIS->bluetoothSettingsPanel, LV_OBJ_FLAG_HIDDEN);
+            lv_group_focus_obj(THIS->bluetoothSettingsButton);
             break;
         }
         case TFTView_320x240::eBackupRestore: {
@@ -6283,6 +6458,9 @@ void TFTView_320x240::updateBluetoothConfig(const meshtastic_Config_BluetoothCon
             controller->setConfigRequested(true);
         }
     }
+
+    if (screensInitialised)
+        updateBluetoothSettings();
 }
 
 void TFTView_320x240::updateSecurityConfig(const meshtastic_Config_SecurityConfig &cfg)
