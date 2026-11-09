@@ -82,8 +82,9 @@ class ViewController
 
     // Programming mode is entered only on explicit user request (long-press boot logo or the reboot panel's
     // programming mode button). Enabling Bluetooth needs a reboot, so the request is persisted until it is served.
-    virtual bool isProgrammingModeRequested(void);
-    virtual void setProgrammingModeRequested(bool requested);
+    // bluetoothWasOff: the request turned Bluetooth on, so leaving programming mode turns it off again.
+    virtual bool isProgrammingModeRequested(bool *bluetoothWasOff = nullptr);
+    virtual void setProgrammingModeRequested(bool requested, bool bluetoothWasOff = true);
 
   protected:
     // generic send method to send a (decoded) payload in a meshpacket to radio

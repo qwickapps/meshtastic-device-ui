@@ -472,23 +472,32 @@ void ViewController::setConfigRequested(bool required)
     requestConfigRequired = required;
 }
 
-bool ViewController::isProgrammingModeRequested(void)
+bool ViewController::isProgrammingModeRequested(bool *bluetoothWasOff)
 {
-    return persistentFS.exists(progModeMarker);
+    if (!persistentFS.exists(progModeMarker))
+        return false;
+    File file = persistentFS.open(progModeMarker, FILE_READ);
+    if (!file)
+        return false;
+    // content '0': Bluetooth was already on when programming mode was requested; empty or '1': it was off
+    int c = file.read();
+    file.close();
+    if (bluetoothWasOff)
+        *bluetoothWasOff = (c != '0');
+    return true;
 }
 
-void ViewController::setProgrammingModeRequested(bool requested)
+void ViewController::setProgrammingModeRequested(bool requested, bool bluetoothWasOff)
 {
-    if (requested == isProgrammingModeRequested())
-        return;
     if (requested) {
         File file = persistentFS.open(progModeMarker, FILE_WRITE);
         if (file) {
+            file.write((uint8_t)(bluetoothWasOff ? '1' : '0'));
             file.close();
         } else {
             ILOG_ERROR("cannot store programming mode request");
         }
-    } else {
+    } else if (persistentFS.exists(progModeMarker)) {
         persistentFS.remove(progModeMarker);
     }
 }

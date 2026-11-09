@@ -217,8 +217,13 @@ bool TFTView_320x240::setupUIConfig(const meshtastic_DeviceUIConfig &uiconfig)
     lv_i18n_init(lv_i18n_language_pack);
     setLocale(db.uiConfig.language);
 
-    if (state == MeshtasticView::eEnterProgrammingMode || state == MeshtasticView::eProgrammingMode ||
-        state == MeshtasticView::eWaitingForReboot) {
+    if (state == MeshtasticView::eEnterProgrammingMode) {
+        // explicit programming mode request (long-press boot logo): the uiconfig comes before the network and bluetooth
+        // config in the download, so decide in updateBluetoothConfig once both are known
+        return false;
+    }
+
+    if (state == MeshtasticView::eProgrammingMode || state == MeshtasticView::eWaitingForReboot) {
         enterProgrammingMode();
         return false;
     }
@@ -681,7 +686,8 @@ uint32_t TFTView_320x240::randomBluetoothPin(void)
 
 void TFTView_320x240::enterProgrammingMode(void)
 {
-    if (state == eEnterProgrammingMode && !db.config.bluetooth.enabled) {
+    // Reboot first if BLE is not running yet: Bluetooth is off, or WiFi keeps the firmware from starting it
+    if (state == eEnterProgrammingMode && (!db.config.bluetooth.enabled || bluetoothBlockedByWifi())) {
         ILOG_INFO("rebooting into programming mode");
         lv_label_set_text(objects.meshtastic_url, _("Rebooting ..."));
 
@@ -691,13 +697,16 @@ void TFTView_320x240::enterProgrammingMode(void)
                 network.wifi_enabled = false;
                 THIS->controller->sendConfig(meshtastic_Config_NetworkConfig{network});
             }
-            // explicit programming mode: random PIN, remembered across the Bluetooth-enable reboot
-            controller->setProgrammingModeRequested(true);
             meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
-            bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
-            bluetooth.fixed_pin = random(100000, 999999);
-            bluetooth.enabled = true;
-            THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, ownNode);
+            // remembered across the reboot; leaving programming mode turns Bluetooth off only if it was off before
+            controller->setProgrammingModeRequested(true, !bluetooth.enabled);
+            if (!bluetooth.enabled) {
+                // explicit programming mode: random PIN
+                bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
+                bluetooth.fixed_pin = randomBluetoothPin();
+                bluetooth.enabled = true;
+                THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, ownNode);
+            }
             state = MeshtasticView::eWaitingForReboot;
         }
     } else {
@@ -1151,15 +1160,23 @@ void TFTView_320x240::ui_event_BluetoothButton(lv_event_t *e)
     lv_event_code_t event_code = lv_event_get_code(e);
     if (event_code == LV_EVENT_LONG_PRESSED) {
         ILOG_INFO("leaving programming mode");
+        bool bluetoothWasOff = true;
+        bool requested = THIS->controller->isProgrammingModeRequested(&bluetoothWasOff);
         THIS->controller->setProgrammingModeRequested(false);
         lv_label_set_text(objects.meshtastic_url, _("Rebooting ..."));
         lv_label_set_text(objects.firmware_label, "");
         lv_obj_remove_flag(objects.boot_logo_button, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(objects.bluetooth_button, LV_OBJ_FLAG_HIDDEN);
 
-        meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
-        bluetooth.enabled = false;
-        THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, THIS->ownNode);
+        if (requested && bluetoothWasOff) {
+            // programming mode turned Bluetooth on: turn it off again (the firmware reboots to apply it)
+            meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
+            bluetooth.enabled = false;
+            THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, THIS->ownNode);
+        } else {
+            // Bluetooth was already on (MUI toggle or another client): keep it, just reboot into the normal UI
+            THIS->controller->requestReboot(3, THIS->ownNode);
+        }
     }
 }
 
@@ -2241,13 +2258,19 @@ void TFTView_320x240::ui_event_device_progmode_button(lv_event_t *e)
             network.wifi_enabled = false;
             THIS->controller->sendConfig(meshtastic_Config_NetworkConfig{network});
         }
-        // explicit programming mode: random PIN, remembered across the Bluetooth-enable reboot
-        THIS->controller->setProgrammingModeRequested(true);
         meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
-        bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
-        bluetooth.fixed_pin = random(100000, 999999);
-        bluetooth.enabled = true;
-        THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, THIS->ownNode);
+        // remembered across the reboot; leaving programming mode turns Bluetooth off only if it was off before
+        THIS->controller->setProgrammingModeRequested(true, !bluetooth.enabled);
+        if (!bluetooth.enabled) {
+            // explicit programming mode: random PIN
+            bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
+            bluetooth.fixed_pin = randomBluetoothPin();
+            bluetooth.enabled = true;
+            THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, THIS->ownNode);
+        } else {
+            // Bluetooth is already on and keeps its PIN: just reboot into programming mode
+            THIS->controller->requestReboot(3, THIS->ownNode);
+        }
         lv_screen_load_anim(objects.blank_screen, LV_SCR_LOAD_ANIM_FADE_OUT, 4000, 1000, false);
         lv_obj_add_flag(objects.reboot_panel, LV_OBJ_FLAG_HIDDEN);
     } else if (event_code == LV_EVENT_LONG_PRESSED) {
@@ -6497,6 +6520,8 @@ void TFTView_320x240::updateBluetoothConfig(const meshtastic_Config_BluetoothCon
     // Bluetooth being enabled is not a reason to leave the normal UI: the MUI and BLE phone clients run concurrently.
     // Programming mode is entered only on explicit user request (long-press boot logo / programming mode button).
     if (state == MeshtasticView::eEnterProgrammingMode) {
+        // long-press boot logo: network and bluetooth config are known now (both come after the uiconfig), so this
+        // enters programming mode directly if BLE is running, otherwise turns WiFi off and reboots with Bluetooth on
         enterProgrammingMode();
     } else if (state <= MeshtasticView::eBootScreenDone && state != MeshtasticView::eWaitingForReboot &&
                state != MeshtasticView::eProgrammingMode && controller->isProgrammingModeRequested()) {
