@@ -3,6 +3,7 @@
 #include "graphics/view/TFT/TFTView_320x240.h"
 #include "Arduino.h"
 #include "graphics/common/BatteryLevel.h"
+#include "graphics/common/BluetoothPolicy.h"
 #include "graphics/common/LoRaPresets.h"
 #include "graphics/common/Ringtones.h"
 #include "graphics/common/ViewController.h"
@@ -216,9 +217,21 @@ bool TFTView_320x240::setupUIConfig(const meshtastic_DeviceUIConfig &uiconfig)
     lv_i18n_init(lv_i18n_language_pack);
     setLocale(db.uiConfig.language);
 
-    if (state == MeshtasticView::eEnterProgrammingMode || state == MeshtasticView::eProgrammingMode ||
-        state == MeshtasticView::eWaitingForReboot) {
+    if (state == MeshtasticView::eEnterProgrammingMode) {
+        // explicit programming mode request (long-press boot logo): the uiconfig comes before the network and bluetooth
+        // config in the download, so decide in updateBluetoothConfig once both are known
+        return false;
+    }
+
+    if (state == MeshtasticView::eProgrammingMode || state == MeshtasticView::eWaitingForReboot) {
         enterProgrammingMode();
+        return false;
+    }
+
+    if (controller->isProgrammingModeRequested()) {
+        // user asked for programming mode before the Bluetooth-enable reboot: wait for the bluetooth config
+        // (updateBluetoothConfig) instead of setting up the screens
+        ILOG_INFO("programming mode requested, waiting for bluetooth config");
         return false;
     }
 
@@ -405,6 +418,11 @@ void TFTView_320x240::init_screens(void)
         lv_obj_add_flag(objects.progmode_button, LV_OBJ_FLAG_HIDDEN);
     }
 
+    createBluetoothSettings();
+    if (controller->isStandalone()) {
+        lv_obj_add_flag(bluetoothSettingsButton, LV_OBJ_FLAG_HIDDEN);
+    }
+
     // signal scanner scale
 #if defined(USE_SX127x)
     lv_label_set_text(objects.signal_scanner_rssi_scale_label, "-50\n-60\n-70\n-80\n-90\n-100\n-110\n-120\n-130\n-140\n-150");
@@ -512,9 +530,164 @@ void TFTView_320x240::ui_set_active(lv_obj_t *b, lv_obj_t *p, lv_obj_t *tp)
     lv_obj_add_flag(objects.msg_popup_panel, LV_OBJ_FLAG_HIDDEN);
 }
 
+/**
+ * @brief Bluetooth on/off entry in the basic settings and its panel. Built at runtime (the generated EEZ screens have no
+ *        bluetooth setting) with the same styles as the other basic settings button/panel pairs, so it follows the theme
+ *        and works for every generated resolution that uses this view.
+ */
+void TFTView_320x240::createBluetoothSettings(void)
+{
+    // basic settings entry, right after "Message Alert"
+    lv_obj_t *obj = lv_btn_create(lv_obj_get_parent(objects.basic_settings_alert_button));
+    bluetoothSettingsButton = obj;
+    lv_obj_set_pos(obj, 0, 0);
+    lv_obj_set_size(obj, LV_PCT(95), 30);
+    add_style_settings_button_style(obj);
+    lv_obj_set_style_align(obj, LV_ALIGN_TOP_MID, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff4db270), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(obj, lv_color_hex(0xff015114), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_move_to_index(obj, lv_obj_get_index(objects.basic_settings_alert_button) + 1);
+    lv_obj_add_event_cb(obj, ui_event_bluetooth_button, LV_EVENT_CLICKED, NULL);
+
+    obj = lv_label_create(bluetoothSettingsButton);
+    bluetoothSettingsLabel = obj;
+    lv_obj_set_pos(obj, 0, 0);
+    lv_obj_set_size(obj, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_label_set_long_mode(obj, LV_LABEL_LONG_DOT);
+    lv_label_set_text(obj, _("Bluetooth: off"));
+    lv_obj_set_style_align(obj, LV_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    // settings panel: on/off switch, PIN, OK/Cancel
+    lv_obj_t *panel = lv_obj_create(lv_obj_get_parent(objects.settings_alert_buzzer_panel));
+    bluetoothSettingsPanel = panel;
+    lv_obj_set_pos(panel, LV_PCT(3), LV_PCT(25));
+    lv_obj_set_size(panel, 220, 138);
+    lv_obj_add_flag(panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    add_style_settings_panel_style(panel);
+    lv_obj_set_style_border_width(panel, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(panel, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0xff216ad8), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_align(panel, LV_ALIGN_TOP_MID, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_opa(panel, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_layout(panel, LV_LAYOUT_NONE, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    obj = lv_label_create(panel);
+    lv_obj_set_pos(obj, 0, 5);
+    lv_obj_set_size(obj, 125, LV_SIZE_CONTENT);
+    lv_label_set_text(obj, _("Bluetooth"));
+    lv_obj_set_style_align(obj, LV_ALIGN_TOP_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    obj = lv_switch_create(panel);
+    bluetoothSettingsSwitch = obj;
+    lv_obj_set_pos(obj, 150, 0);
+    lv_obj_set_size(obj, 50, 25);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0xffb4b4b4), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(obj, lv_color_hex(0xff606060), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0xffffffff), LV_PART_KNOB | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff67ea94), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff67ea94), LV_PART_INDICATOR | LV_STATE_PRESSED);
+    lv_obj_add_event_cb(obj, ui_event_bluetooth_switch, LV_EVENT_VALUE_CHANGED, NULL);
+
+    obj = lv_label_create(panel);
+    bluetoothSettingsPinLabel = obj;
+    lv_obj_set_pos(obj, 0, 38);
+    lv_obj_set_size(obj, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_label_set_text(obj, "");
+    lv_obj_set_style_align(obj, LV_ALIGN_TOP_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    // OK / Cancel row, same look as the generated OkCancel user widget
+    lv_obj_t *row = lv_obj_create(panel);
+    lv_obj_set_size(row, LV_PCT(100), 50);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    add_style_panel_style(row);
+    lv_obj_set_style_align(row, LV_ALIGN_BOTTOM_MID, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_all(row, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    const char *texts[] = {_("OK"), _("Cancel")};
+    lv_event_cb_t callbacks[] = {ui_event_ok, ui_event_cancel};
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *button = lv_btn_create(row);
+        lv_obj_set_size(button, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0xff216ad8), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_shadow_width(button, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_radius(button, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_pad_left(button, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_pad_right(button, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_add_event_cb(button, callbacks[i], LV_EVENT_CLICKED, NULL);
+        lv_obj_t *label = lv_label_create(button);
+        lv_label_set_text(label, texts[i]);
+    }
+
+    updateBluetoothSettings();
+}
+
+void TFTView_320x240::updateBluetoothSettings(void)
+{
+    if (!bluetoothSettingsLabel)
+        return;
+
+    const meshtastic_Config_BluetoothConfig &bluetooth = db.config.bluetooth;
+    char buf[64];
+    if (bluetooth.enabled && bluetoothBlockedByWifi()) {
+        // the firmware does not start BLE while WiFi is on, so there is no PIN to enter
+        lv_snprintf(buf, sizeof(buf), _("Bluetooth: on (inactive: WiFi)"));
+    } else if (bluetooth.enabled) {
+        lv_snprintf(buf, sizeof(buf), _("Bluetooth: on, PIN %06u"), (unsigned int)bluetooth.fixed_pin);
+    } else {
+        lv_snprintf(buf, sizeof(buf), _("Bluetooth: off"));
+    }
+    lv_label_set_text(bluetoothSettingsLabel, buf);
+
+    // panel: while the switch is on show the PIN the phone has to enter, and that OK turns WiFi off if it blocks BLE
+    if (lv_obj_has_state(bluetoothSettingsSwitch, LV_STATE_CHECKED)) {
+        uint32_t pin = bluetooth.enabled ? bluetooth.fixed_pin : bluetoothPinForEnable();
+        if (bluetoothBlockedByWifi()) {
+            lv_snprintf(buf, sizeof(buf), _("PIN: %06u\nOK turns WiFi off"), (unsigned int)pin);
+        } else {
+            lv_snprintf(buf, sizeof(buf), _("PIN: %06u"), (unsigned int)pin);
+        }
+        lv_label_set_text(bluetoothSettingsPinLabel, buf);
+        lv_obj_clear_flag(bluetoothSettingsPinLabel, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(bluetoothSettingsPinLabel, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+bool TFTView_320x240::bluetoothBlockedByWifi(void)
+{
+    return BluetoothPolicy::blockedByWifi(db.config.network.wifi_enabled, db.config.network.wifi_ssid);
+}
+
+uint32_t TFTView_320x240::bluetoothPinForEnable(void)
+{
+    // a stored PIN is kept; a weak one (the public default 123456) is replaced by a random PIN, chosen once per panel
+    // so the PIN shown is the PIN stored on OK
+    if (!BluetoothPolicy::isWeakPin(db.config.bluetooth.fixed_pin))
+        return db.config.bluetooth.fixed_pin;
+    if (!bluetoothNewPin)
+        bluetoothNewPin = randomBluetoothPin();
+    return bluetoothNewPin;
+}
+
+uint32_t TFTView_320x240::randomBluetoothPin(void)
+{
+    return BluetoothPolicy::randomPin(
+        []() { return random((long)BluetoothPolicy::minPin, (long)BluetoothPolicy::maxPin + 1); });
+}
+
 void TFTView_320x240::enterProgrammingMode(void)
 {
-    if (state == eEnterProgrammingMode && !db.config.bluetooth.enabled) {
+    // Reboot first if BLE is not running yet: Bluetooth is off, or WiFi keeps the firmware from starting it
+    if (state == eEnterProgrammingMode && (!db.config.bluetooth.enabled || bluetoothBlockedByWifi())) {
         ILOG_INFO("rebooting into programming mode");
         lv_label_set_text(objects.meshtastic_url, _("Rebooting ..."));
 
@@ -525,10 +698,15 @@ void TFTView_320x240::enterProgrammingMode(void)
                 THIS->controller->sendConfig(meshtastic_Config_NetworkConfig{network});
             }
             meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
-            bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
-            bluetooth.fixed_pin = random(100000, 999999);
-            bluetooth.enabled = true;
-            THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, ownNode);
+            // remembered across the reboot; leaving programming mode turns Bluetooth off only if it was off before
+            controller->setProgrammingModeRequested(true, !bluetooth.enabled);
+            if (!bluetooth.enabled) {
+                // explicit programming mode: random PIN
+                bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
+                bluetooth.fixed_pin = randomBluetoothPin();
+                bluetooth.enabled = true;
+                THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, ownNode);
+            }
             state = MeshtasticView::eWaitingForReboot;
         }
     } else {
@@ -982,14 +1160,23 @@ void TFTView_320x240::ui_event_BluetoothButton(lv_event_t *e)
     lv_event_code_t event_code = lv_event_get_code(e);
     if (event_code == LV_EVENT_LONG_PRESSED) {
         ILOG_INFO("leaving programming mode");
+        bool bluetoothWasOff = true;
+        bool requested = THIS->controller->isProgrammingModeRequested(&bluetoothWasOff);
+        THIS->controller->setProgrammingModeRequested(false);
         lv_label_set_text(objects.meshtastic_url, _("Rebooting ..."));
         lv_label_set_text(objects.firmware_label, "");
         lv_obj_remove_flag(objects.boot_logo_button, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(objects.bluetooth_button, LV_OBJ_FLAG_HIDDEN);
 
-        meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
-        bluetooth.enabled = false;
-        THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, THIS->ownNode);
+        if (requested && bluetoothWasOff) {
+            // programming mode turned Bluetooth on: turn it off again (the firmware reboots to apply it)
+            meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
+            bluetooth.enabled = false;
+            THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, THIS->ownNode);
+        } else {
+            // Bluetooth was already on (MUI toggle or another client): keep it, just reboot into the normal UI
+            THIS->controller->requestReboot(3, THIS->ownNode);
+        }
     }
 }
 
@@ -1974,6 +2161,32 @@ void TFTView_320x240::ui_event_alert_button(lv_event_t *e)
     }
 }
 
+void TFTView_320x240::ui_event_bluetooth_button(lv_event_t *e)
+{
+    lv_event_code_t event_code = lv_event_get_code(e);
+    if (event_code == LV_EVENT_CLICKED && THIS->activeSettings == eNone && THIS->db.config.has_bluetooth) {
+        THIS->bluetoothNewPin = 0;
+        if (THIS->db.config.bluetooth.enabled) {
+            lv_obj_add_state(THIS->bluetoothSettingsSwitch, LV_STATE_CHECKED);
+        } else {
+            lv_obj_remove_state(THIS->bluetoothSettingsSwitch, LV_STATE_CHECKED);
+        }
+        THIS->updateBluetoothSettings();
+        lv_obj_clear_flag(THIS->bluetoothSettingsPanel, LV_OBJ_FLAG_HIDDEN);
+        lv_group_focus_obj(THIS->bluetoothSettingsSwitch);
+        THIS->disablePanel(objects.controller_panel);
+        THIS->disablePanel(objects.tab_page_basic_settings);
+        THIS->activeSettings = eBluetooth;
+    }
+}
+
+void TFTView_320x240::ui_event_bluetooth_switch(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
+        THIS->updateBluetoothSettings();
+    }
+}
+
 // backup & restore
 void TFTView_320x240::ui_event_backup_button(lv_event_t *e)
 {
@@ -2046,10 +2259,18 @@ void TFTView_320x240::ui_event_device_progmode_button(lv_event_t *e)
             THIS->controller->sendConfig(meshtastic_Config_NetworkConfig{network});
         }
         meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
-        bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
-        bluetooth.fixed_pin = random(100000, 999999);
-        bluetooth.enabled = true;
-        THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, THIS->ownNode);
+        // remembered across the reboot; leaving programming mode turns Bluetooth off only if it was off before
+        THIS->controller->setProgrammingModeRequested(true, !bluetooth.enabled);
+        if (!bluetooth.enabled) {
+            // explicit programming mode: random PIN
+            bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
+            bluetooth.fixed_pin = randomBluetoothPin();
+            bluetooth.enabled = true;
+            THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, THIS->ownNode);
+        } else {
+            // Bluetooth is already on and keeps its PIN: just reboot into programming mode
+            THIS->controller->requestReboot(3, THIS->ownNode);
+        }
         lv_screen_load_anim(objects.blank_screen, LV_SCR_LOAD_ANIM_FADE_OUT, 4000, 1000, false);
         lv_obj_add_flag(objects.reboot_panel, LV_OBJ_FLAG_HIDDEN);
     } else if (event_code == LV_EVENT_LONG_PRESSED) {
@@ -4146,6 +4367,34 @@ void TFTView_320x240::ui_event_ok(lv_event_t *e)
             lv_group_focus_obj(objects.basic_settings_alert_button);
             break;
         }
+        case eBluetooth: {
+            meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
+            bool enabled = lv_obj_has_state(THIS->bluetoothSettingsSwitch, LV_STATE_CHECKED);
+            bool changed = false;
+            if (enabled && THIS->bluetoothBlockedByWifi()) {
+                // the firmware does not start BLE while WiFi is on: turn WiFi off first (as the programming mode does)
+                meshtastic_Config_NetworkConfig &network = THIS->db.config.network;
+                network.wifi_enabled = false;
+                THIS->controller->sendConfig(meshtastic_Config_NetworkConfig{network}, THIS->ownNode);
+                changed = true;
+            }
+            if (enabled != bluetooth.enabled) {
+                // MUI toggle: fixed PIN shown in the settings. A stored PIN is kept (not re-randomized on every toggle);
+                // the public default PIN is replaced once by a random one, which is then stored and kept.
+                if (enabled)
+                    bluetooth.fixed_pin = THIS->bluetoothPinForEnable();
+                bluetooth.enabled = enabled;
+                bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
+                THIS->controller->sendConfig(meshtastic_Config_BluetoothConfig{bluetooth}, THIS->ownNode);
+                changed = true;
+            }
+            if (changed)
+                THIS->notifyReboot(true); // the firmware reboots to apply network and bluetooth changes
+            THIS->updateBluetoothSettings();
+            lv_obj_add_flag(THIS->bluetoothSettingsPanel, LV_OBJ_FLAG_HIDDEN);
+            lv_group_focus_obj(THIS->bluetoothSettingsButton);
+            break;
+        }
         case eBackupRestore: {
             uint32_t option = lv_dropdown_get_selected(objects.settings_backup_restore_dropdown);
             if (lv_obj_has_state(objects.settings_backup_checkbox, LV_STATE_CHECKED)) {
@@ -4317,6 +4566,11 @@ void TFTView_320x240::ui_event_cancel(lv_event_t *e)
         case TFTView_320x240::eAlertBuzzer: {
             lv_obj_add_flag(objects.settings_alert_buzzer_panel, LV_OBJ_FLAG_HIDDEN);
             lv_group_focus_obj(objects.basic_settings_alert_button);
+            break;
+        }
+        case TFTView_320x240::eBluetooth: {
+            lv_obj_add_flag(THIS->bluetoothSettingsPanel, LV_OBJ_FLAG_HIDDEN);
+            lv_group_focus_obj(THIS->bluetoothSettingsButton);
             break;
         }
         case TFTView_320x240::eBackupRestore: {
@@ -5982,13 +6236,19 @@ void TFTView_320x240::updateNetworkConfig(const meshtastic_Config_NetworkConfig 
     char buf[40];
     lv_snprintf(buf, sizeof(buf), _("WiFi: %s"), cfg.wifi_ssid[0] ? cfg.wifi_ssid : _("<not set>"));
     lv_label_set_text(objects.basic_settings_wifi_label, buf);
+
+    if (screensInitialised)
+        updateBluetoothSettings(); // WiFi may keep BLE from starting
 }
 
 void TFTView_320x240::updateDisplayConfig(const meshtastic_Config_DisplayConfig &cfg)
 {
     db.config.display = cfg;
     db.config.has_display = true;
-    if (!controller->isStandalone() && cfg.displaymode != meshtastic_Config_DisplayConfig_DisplayMode_COLOR) {
+    // enforce the color (MUI) display mode during the initial download only; after that a display config is another
+    // client's deliberate change pushed to us, and sending COLOR back would revert it
+    if (!configComplete && !controller->isStandalone() &&
+        cfg.displaymode != meshtastic_Config_DisplayConfig_DisplayMode_COLOR) {
         meshtastic_Config_DisplayConfig &display = db.config.display;
         display.displaymode = meshtastic_Config_DisplayConfig_DisplayMode_COLOR;
         THIS->controller->sendConfig(meshtastic_Config_DisplayConfig{display}, THIS->ownNode);
@@ -6032,7 +6292,8 @@ void TFTView_320x240::updateLoRaConfig(const meshtastic_Config_LoRaConfig &cfg)
                 setChannelName(db.channel[i]);
             }
         }
-    } else {
+    } else if (!configComplete) {
+        // initial setup only during the initial download, never from a config another client pushed later
         requestSetup();
     }
 }
@@ -6256,9 +6517,26 @@ void TFTView_320x240::updateBluetoothConfig(const meshtastic_Config_BluetoothCon
         ownNode = id;
     }
 
-    if (state <= MeshtasticView::eBootScreenDone && state != MeshtasticView::eWaitingForReboot) {
+    // Bluetooth being enabled is not a reason to leave the normal UI: the MUI and BLE phone clients run concurrently.
+    // Programming mode is entered only on explicit user request (long-press boot logo / programming mode button).
+    if (state == MeshtasticView::eEnterProgrammingMode) {
+        // long-press boot logo: network and bluetooth config are known now (both come after the uiconfig), so this
+        // enters programming mode directly if BLE is running, otherwise turns WiFi off and reboots with Bluetooth on
         enterProgrammingMode();
+    } else if (state <= MeshtasticView::eBootScreenDone && state != MeshtasticView::eWaitingForReboot &&
+               state != MeshtasticView::eProgrammingMode && controller->isProgrammingModeRequested()) {
+        if (cfg.enabled) {
+            enterProgrammingMode();
+        } else {
+            // the Bluetooth-enable never took effect: drop the request and continue with the normal setup
+            ILOG_WARN("programming mode requested but bluetooth is disabled, continue normal startup");
+            controller->setProgrammingModeRequested(false);
+            controller->setConfigRequested(true);
+        }
     }
+
+    if (screensInitialised)
+        updateBluetoothSettings();
 }
 
 void TFTView_320x240::updateSecurityConfig(const meshtastic_Config_SecurityConfig &cfg)
