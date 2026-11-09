@@ -6175,7 +6175,10 @@ void TFTView_320x240::updateDisplayConfig(const meshtastic_Config_DisplayConfig 
 {
     db.config.display = cfg;
     db.config.has_display = true;
-    if (!controller->isStandalone() && cfg.displaymode != meshtastic_Config_DisplayConfig_DisplayMode_COLOR) {
+    // enforce the color (MUI) display mode during the initial download only; after that a display config is another
+    // client's deliberate change pushed to us, and sending COLOR back would revert it
+    if (!configComplete && !controller->isStandalone() &&
+        cfg.displaymode != meshtastic_Config_DisplayConfig_DisplayMode_COLOR) {
         meshtastic_Config_DisplayConfig &display = db.config.display;
         display.displaymode = meshtastic_Config_DisplayConfig_DisplayMode_COLOR;
         THIS->controller->sendConfig(meshtastic_Config_DisplayConfig{display}, THIS->ownNode);
@@ -6219,7 +6222,8 @@ void TFTView_320x240::updateLoRaConfig(const meshtastic_Config_LoRaConfig &cfg)
                 setChannelName(db.channel[i]);
             }
         }
-    } else {
+    } else if (!configComplete) {
+        // initial setup only during the initial download, never from a config another client pushed later
         requestSetup();
     }
 }
