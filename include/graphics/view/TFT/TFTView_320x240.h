@@ -143,6 +143,12 @@ class TFTView_320x240 : public MeshtasticView
     virtual void createBluetoothSettings(void);
     // show the current bluetooth state and PIN in the settings
     virtual void updateBluetoothSettings(void);
+    // true if the WiFi config keeps the firmware from starting BLE
+    bool bluetoothBlockedByWifi(void);
+    // the PIN stored when the MUI turns Bluetooth on (the stored PIN, or a random one replacing a weak stored PIN)
+    uint32_t bluetoothPinForEnable(void);
+    // random six digit PIN that is not the public default
+    static uint32_t randomBluetoothPin(void);
     // update node counter display (online and filtered)
     virtual void updateNodesStatus(void);
     // display message popup
@@ -409,6 +415,7 @@ class TFTView_320x240 : public MeshtasticView
     lv_obj_t *bluetoothSettingsPanel = nullptr;           // Bluetooth settings panel
     lv_obj_t *bluetoothSettingsSwitch = nullptr;          // Bluetooth on/off switch
     lv_obj_t *bluetoothSettingsPinLabel = nullptr;        // fixed PIN shown while Bluetooth is on
+    uint32_t bluetoothNewPin = 0;                         // replacement for a weak stored PIN, chosen once per panel
     uint32_t nodesFiltered;                               // no. hidden nodes in node list
     bool nodesChanged;                                    // true if nodes changed (added or purged)
     bool processingFilter;                                // indicates that filtering is ongoing
