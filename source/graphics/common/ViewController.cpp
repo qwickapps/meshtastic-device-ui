@@ -15,6 +15,8 @@ fs::FS &persistentFS = LittleFS;
 
 const size_t DATA_PAYLOAD_LEN = meshtastic_Constants_DATA_PAYLOAD_LEN;
 constexpr const char *logDir = "/messages";
+// marker file: the user asked for programming mode, enter it after the Bluetooth-enable reboot
+constexpr const char *progModeMarker = "/mui_progmode";
 
 /**
  * @brief mediate between GUI view and client interface
@@ -468,6 +470,27 @@ void ViewController::sendPing(void)
 void ViewController::setConfigRequested(bool required)
 {
     requestConfigRequired = required;
+}
+
+bool ViewController::isProgrammingModeRequested(void)
+{
+    return persistentFS.exists(progModeMarker);
+}
+
+void ViewController::setProgrammingModeRequested(bool requested)
+{
+    if (requested == isProgrammingModeRequested())
+        return;
+    if (requested) {
+        File file = persistentFS.open(progModeMarker, FILE_WRITE);
+        if (file) {
+            file.close();
+        } else {
+            ILOG_ERROR("cannot store programming mode request");
+        }
+    } else {
+        persistentFS.remove(progModeMarker);
+    }
 }
 
 void ViewController::sendTextMessage(uint32_t to, uint8_t ch, uint8_t hopLimit, uint32_t msgTime, uint32_t requestId, bool usePkc,
