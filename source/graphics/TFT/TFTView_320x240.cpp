@@ -222,6 +222,13 @@ bool TFTView_320x240::setupUIConfig(const meshtastic_DeviceUIConfig &uiconfig)
         return false;
     }
 
+    if (controller->isProgrammingModeRequested()) {
+        // user asked for programming mode before the Bluetooth-enable reboot: wait for the bluetooth config
+        // (updateBluetoothConfig) instead of setting up the screens
+        ILOG_INFO("programming mode requested, waiting for bluetooth config");
+        return false;
+    }
+
     state = MeshtasticView::eSetupUIConfig;
 
     // now we have set language, continue creating all screens
@@ -524,6 +531,8 @@ void TFTView_320x240::enterProgrammingMode(void)
                 network.wifi_enabled = false;
                 THIS->controller->sendConfig(meshtastic_Config_NetworkConfig{network});
             }
+            // explicit programming mode: random PIN, remembered across the Bluetooth-enable reboot
+            controller->setProgrammingModeRequested(true);
             meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
             bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
             bluetooth.fixed_pin = random(100000, 999999);
@@ -982,6 +991,7 @@ void TFTView_320x240::ui_event_BluetoothButton(lv_event_t *e)
     lv_event_code_t event_code = lv_event_get_code(e);
     if (event_code == LV_EVENT_LONG_PRESSED) {
         ILOG_INFO("leaving programming mode");
+        THIS->controller->setProgrammingModeRequested(false);
         lv_label_set_text(objects.meshtastic_url, _("Rebooting ..."));
         lv_label_set_text(objects.firmware_label, "");
         lv_obj_remove_flag(objects.boot_logo_button, LV_OBJ_FLAG_HIDDEN);
@@ -2045,6 +2055,8 @@ void TFTView_320x240::ui_event_device_progmode_button(lv_event_t *e)
             network.wifi_enabled = false;
             THIS->controller->sendConfig(meshtastic_Config_NetworkConfig{network});
         }
+        // explicit programming mode: random PIN, remembered across the Bluetooth-enable reboot
+        THIS->controller->setProgrammingModeRequested(true);
         meshtastic_Config_BluetoothConfig &bluetooth = THIS->db.config.bluetooth;
         bluetooth.mode = meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN;
         bluetooth.fixed_pin = random(100000, 999999);
@@ -6256,8 +6268,20 @@ void TFTView_320x240::updateBluetoothConfig(const meshtastic_Config_BluetoothCon
         ownNode = id;
     }
 
-    if (state <= MeshtasticView::eBootScreenDone && state != MeshtasticView::eWaitingForReboot) {
+    // Bluetooth being enabled is not a reason to leave the normal UI: the MUI and BLE phone clients run concurrently.
+    // Programming mode is entered only on explicit user request (long-press boot logo / programming mode button).
+    if (state == MeshtasticView::eEnterProgrammingMode) {
         enterProgrammingMode();
+    } else if (state <= MeshtasticView::eBootScreenDone && state != MeshtasticView::eWaitingForReboot &&
+               state != MeshtasticView::eProgrammingMode && controller->isProgrammingModeRequested()) {
+        if (cfg.enabled) {
+            enterProgrammingMode();
+        } else {
+            // the Bluetooth-enable never took effect: drop the request and continue with the normal setup
+            ILOG_WARN("programming mode requested but bluetooth is disabled, continue normal startup");
+            controller->setProgrammingModeRequested(false);
+            controller->setConfigRequested(true);
+        }
     }
 }
 
